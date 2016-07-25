@@ -1831,12 +1831,129 @@ h3.tab-header {
   }
 }
 
-.attribute-selector {
-  .controls {
-    display: flex;
+.structure-filters {
+  .attributes {
+    .controls {
+      display: flex;
+    }
   }
 }
 
 .remove.icon-trash {
   cursor: pointer;
+}
+
+.column-configurator-modal {
+  display: flex;
+  flex-direction: column;
+  height: 90%;
+
+  .modal-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+.attribute-selector {
+  display: flex;
+  flex: 1;
+  color: #7e878f;
+  background: white;
+
+  & > div {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+
+    &.attributes {
+      & > header {
+        padding-top: 9px;
+        padding-bottom: 9px;
+
+        input {
+          margin: 0;
+          width: 100%;
+        }
+      }
+    }
+
+    &.selected-attributes {
+      header {
+        display: flex;
+        padding: 8px 15px;
+
+
+        span:first-child {
+          flex: 1;
+          align-self: center;
+        }
+      }
+
+      .empty-message {
+        flex: 1;
+        align-self: center;
+
+        &:not(.empty) {
+          display: none;
+        }
+      }
+    }
+
+    &:not(:last-child) {
+      border-right: 1px solid #95989e;
+      background: #f1f4f9;
+    }
+
+    & > header {
+      border-bottom: 1px solid #95989E;
+      padding: 15px;
+
+      &:first-letter {
+        text-transform: capitalize;
+      }
+    }
+
+    & > div {
+      padding: 15px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: auto;
+
+      ul {
+        list-style-type: none;
+        margin: 0;
+        flex: 1;
+
+        li {
+          background: #ecf1f2;
+          border: 1px solid #95989E;
+          border-bottom: none;
+          padding: 15px;
+
+          &:hover {
+            cursor: pointer;
+          }
+
+          &.ui-sortable-helper {
+            border-bottom: 1px solid #95989E;
+          }
+
+          &.selected {
+            background: #95989E;
+            color: white;
+          }
+
+          &:first-letter {
+            text-transform: capitalize;
+          }
+
+          &:last-child {
+            border-bottom: 1px solid #95989E;
+          }
+        }
+      }
+    }
+  }
 }
