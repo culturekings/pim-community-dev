@@ -2,37 +2,43 @@
 
 namespace spec\Pim\Component\Connector\Processor\Normalization;
 
-use Akeneo\Component\Batch\Item\FileInvalidItem;
-use Akeneo\Component\Batch\Item\InvalidItemException;
 use Akeneo\Component\Batch\Job\JobParameters;
 use Akeneo\Component\Batch\Model\StepExecution;
 use Akeneo\Component\FileStorage\Model\FileInfoInterface;
 use Akeneo\Component\StorageUtils\Detacher\ObjectDetacherInterface;
+use Akeneo\Component\StorageUtils\Updater\ObjectUpdaterInterface;
 use Doctrine\Common\Collections\ArrayCollection;
 use PhpSpec\ObjectBehavior;
+use Pim\Component\Catalog\Model\AttributeInterface;
 use Pim\Component\Catalog\Model\GroupInterface;
 use Pim\Component\Catalog\Model\ProductTemplateInterface;
 use Pim\Component\Catalog\Model\ProductValueInterface;
+use Pim\Component\Connector\Writer\File\BulkFileExporter;
 use Prophecy\Argument;
+use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\HttpFoundation\File\Exception\FileNotFoundException;
-use Symfony\Component\Serializer\Normalizer\DenormalizerInterface;
 use Symfony\Component\Serializer\Normalizer\NormalizerInterface;
 
 class VariantGroupProcessorSpec extends ObjectBehavior
 {
+    /** @var Filesystem */
+    private $filesystem;
+
+    /** @var string */
+    private $directory;
+
     function let(
         NormalizerInterface $normalizer,
-        DenormalizerInterface $denormalizer,
-        StepExecution $stepExecution,
-        ObjectDetacherInterface $objectDetacher
+        ObjectDetacherInterface $objectDetacher,
+        BulkFileExporter $mediaExporter,
+        ObjectUpdaterInterface $variantGroupUpdater,
+        StepExecution $stepExecution
     ) {
-        $this->beConstructedWith(
-            $normalizer,
-            $denormalizer,
-            $objectDetacher,
-            'upload/path/',
-            'csv'
-        );
+        $this->directory = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'spec' . DIRECTORY_SEPARATOR;
+        $this->filesystem = new Filesystem();
+        $this->filesystem->mkdir($this->directory);
+
+        $this->beConstructedWith($normalizer, $objectDetacher, $mediaExporter, $variantGroupUpdater);
         $this->setStepExecution($stepExecution);
     }
 
@@ -50,31 +56,39 @@ class VariantGroupProcessorSpec extends ObjectBehavior
         $objectDetacher,
         $normalizer,
         $stepExecution,
+        AttributeInterface $color,
+        AttributeInterface $weight,
         GroupInterface $variantGroup,
         JobParameters $jobParameters
     ) {
         $stepExecution->getJobParameters()->willReturn($jobParameters);
-        $jobParameters->get('decimalSeparator')->willReturn('.');
-        $jobParameters->get('dateFormat')->willReturn('yyyy-MM-dd');
 
         $variantGroup->getProductTemplate()->willReturn(null);
         $variantGroup->getCode()->willReturn('my_variant_group');
+        $color->getCode()->willReturn('color');
+        $weight->getCode()->willReturn('weight');
+        $variantGroup->getAxisAttributes()->willReturn(new ArrayCollection([$color, $weight]));
+
+        $variantStandard = [
+            'code' => 'my_variant_group',
+            'axis' => ['color', 'weight'],
+            'type' => 'variant',
+            'labels' => [
+                'en_US' => 'My variant group',
+                'fr_FR' => 'Mon groupe de variante',
+            ]
+        ];
 
         $normalizer->normalize(
             $variantGroup,
-            'csv',
+            null,
             [
                 'with_variant_group_values' => true,
                 'identifier'                => 'my_variant_group',
-                'decimal_separator'         => '.',
-                'date_format'                => 'yyyy-MM-dd',
             ]
-        )->willReturn('my;variant;group;to;csv;');
+        )->willReturn($variantStandard);
 
-        $this->process($variantGroup)->shouldReturn([
-            'media' => [],
-            'variant_group' => 'my;variant;group;to;csv;'
-        ]);
+        $this->process($variantGroup)->shouldReturn($variantStandard);
 
         $objectDetacher->detach($variantGroup)->shouldBeCalled();
     }
@@ -82,8 +96,9 @@ class VariantGroupProcessorSpec extends ObjectBehavior
     function it_processes_variant_group_without_media(
         $objectDetacher,
         $normalizer,
-        $denormalizer,
+        $variantGroupUpdater,
         $stepExecution,
+        $mediaExporter,
         ArrayCollection $productValuesCollection,
         ArrayCollection $emptyCollection,
         GroupInterface $variantGroup,
@@ -92,34 +107,37 @@ class VariantGroupProcessorSpec extends ObjectBehavior
         JobParameters $jobParameters
     ) {
         $stepExecution->getJobParameters()->willReturn($jobParameters);
-        $jobParameters->get('decimalSeparator')->willReturn('.');
-        $jobParameters->get('dateFormat')->willReturn('yyyy-MM-dd');
+        $jobParameters->get('filePath')->willReturn('/my/path/variant_group.csv');
 
         $variantGroup->getProductTemplate()->willReturn($productTemplate);
         $variantGroup->getCode()->willReturn('my_variant_group');
 
         $productTemplate->getValuesData()->willReturn([$productValue]);
 
-        $denormalizer->denormalize([$productValue], 'ProductValue[]', 'json')->willReturn($productValuesCollection);
-
         $productValuesCollection->filter(Argument::cetera())->willReturn($emptyCollection);
         $emptyCollection->toArray()->willReturn([]);
 
+        $variantStandard = [
+            'code' => 'my_variant_group'
+        ];
+
         $normalizer->normalize(
             $variantGroup,
-            'csv',
+            null,
             [
                 'with_variant_group_values' => true,
                 'identifier'                => 'my_variant_group',
-                'decimal_separator'         => '.',
-                'date_format'                => 'yyyy-MM-dd',
             ]
-        )->willReturn('my;variant;group;to;csv;');
+        )->willReturn($variantStandard);
 
-        $this->process($variantGroup)->shouldReturn([
-            'media' => [],
-            'variant_group' => 'my;variant;group;to;csv;'
-        ]);
+        $productTemplate->getValuesData()->willReturn([]);
+        $productTemplate->getValues()->willReturn($emptyCollection);
+        $mediaExporter->exportAll($emptyCollection, '/my/path', 'my_variant_group')->shouldBeCalled();
+        $mediaExporter->getErrors()->willReturn([]);
+
+        $variantGroupUpdater->update($variantGroup, Argument::any())->shouldBeCalled();
+
+        $this->process($variantGroup)->shouldReturn($variantStandard);
 
         $objectDetacher->detach($variantGroup)->shouldBeCalled();
     }
@@ -127,8 +145,9 @@ class VariantGroupProcessorSpec extends ObjectBehavior
     function it_processes_a_variant_group_with_several_media(
         $objectDetacher,
         $normalizer,
-        $denormalizer,
+        $mediaExporter,
         $stepExecution,
+        $variantGroupUpdater,
         ArrayCollection $productValuesCollection,
         ArrayCollection $mediaCollection,
         FileInfoInterface $media1,
@@ -139,50 +158,49 @@ class VariantGroupProcessorSpec extends ObjectBehavior
         JobParameters $jobParameters
     ) {
         $stepExecution->getJobParameters()->willReturn($jobParameters);
-        $jobParameters->get('decimalSeparator')->willReturn('.');
-        $jobParameters->get('dateFormat')->willReturn('yyyy-MM-dd');
+        $jobParameters->get('filePath')->willReturn($this->directory . 'variant_group.csv');
 
         $variantGroup->getProductTemplate()->willReturn($productTemplate);
         $variantGroup->getCode()->willReturn('my_variant_group');
 
         $productTemplate->getValuesData()->willReturn([$productValue]);
-
-        $denormalizer->denormalize([$productValue], 'ProductValue[]', 'json')->willReturn($productValuesCollection);
-
-        $productValuesCollection->filter(Argument::cetera())->willReturn($mediaCollection);
         $mediaCollection->toArray()->willReturn([$media1, $media2]);
 
-        $normalizer->normalize(
-            [$media1, $media2],
-            'csv',
-            [
-                'field_name'   => 'media',
-                'prepare_copy' => true,
-                'identifier'   => 'my_variant_group'
+        $values = [
+            'picture' => [
+                'locale' => null,
+                'scope'  => null,
+                'data'   => ['filePath' => 'a/b/c/d/e/f/little_cat.jpg']
+            ],
+            'pdf_description' => [
+                'locale' => 'en_US',
+                'scope'  => null,
+                'data'   => ['filePath' => 'a/f/c/c/e/f/little_cat.pdf']
             ]
-        )->willReturn([
-            ['code' => 'img', 'path' => 'upload/path/', 'ext' => 'jpg'],
-            ['code' => 'yolo_img', 'path' => 'upload/path/', 'ext' => 'jpg']
-        ]);
+        ];
+
+        $variantStandard = [
+            'code'   => 'my_variant_group',
+            'values' => $values,
+        ];
 
         $normalizer->normalize(
             $variantGroup,
-            'csv',
+            null,
             [
                 'with_variant_group_values' => true,
                 'identifier'                => 'my_variant_group',
-                'decimal_separator'         => '.',
-                'date_format'                => 'yyyy-MM-dd',
             ]
-        )->willReturn('my;variant;group;to;csv;');
+        )->willReturn($variantStandard);
 
-        $this->process($variantGroup)->shouldReturn([
-            'media' => [
-                ['code' => 'img', 'path' => 'upload/path/', 'ext' => 'jpg'],
-                ['code' => 'yolo_img', 'path' => 'upload/path/', 'ext' => 'jpg']
-            ],
-            'variant_group' => 'my;variant;group;to;csv;'
-        ]);
+        $productTemplate->getValuesData()->willReturn($values);
+
+        $variantGroupUpdater->update($variantGroup, Argument::any())->shouldBeCalled();
+        $productTemplate->getValues()->willReturn($mediaCollection);
+        $mediaExporter->exportAll($mediaCollection, $this->directory, 'my_variant_group')->shouldBeCalled();
+        $mediaExporter->getErrors()->willReturn([]);
+
+        $this->process($variantGroup)->shouldReturn($variantStandard);
 
         $objectDetacher->detach($variantGroup)->shouldBeCalled();
     }
